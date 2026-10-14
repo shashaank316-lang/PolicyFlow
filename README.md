@@ -12,7 +12,9 @@ The application contains three services:
 
 ### Event-driven processing
 
-Claims Service uses the transactional outbox pattern to persist claim changes and event records before asynchronous publication. Kafka consumers process claim events with duplicate-event protection. Failed events can be routed to a dead-letter topic, with an operator-oriented replay endpoint and replay audit records.
+The Claims Service uses the transactional outbox pattern to persist claim changes and event records before asynchronous publication to Kafka. Kafka consumers process claim events with duplicate-event protection. Failed events can be routed to a dead-letter topic (`claim-events.DLT`) after retry handling.
+
+The DLT replay endpoint accepts an operator-supplied event payload, validates it, and republishes supported events through the outbox publisher to the `claim-events` topic. It does not automatically read messages from the dead-letter topic. Replay attempts are recorded in the database for auditing. In this local development implementation, the replay endpoint does not include authentication and authorization.
 
 ## Technology Stack
 
