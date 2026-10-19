@@ -1,3 +1,4 @@
+
 package com.policyflow.policyservice.config;
 
 import org.springframework.context.annotation.Bean;
@@ -10,7 +11,7 @@ public class RestClientConfig {
     @Bean
     public RestClient customerServiceRestClient() {
         return RestClient.builder()
-                .baseUrl("http://localhost:8081")
+                .baseUrl("http://customer-service:8081")
                 .build();
     }
 }
