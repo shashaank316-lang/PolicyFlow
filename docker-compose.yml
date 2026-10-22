@@ -7,11 +7,11 @@
       image: postgres:17
       container_name: policyflow-postgres
       environment:
-        POSTGRES_USER: policyflow
-        POSTGRES_PASSWORD: policyflow_test
-        POSTGRES_DB: policyflow
+        POSTGRES_USER: ${POSTGRES_USER}
+        POSTGRES_PASSWORD: ${POSTGRES_PASSWORD}
+        POSTGRES_DB: ${POSTGRES_DB}
       ports:
-        - "5432:5432"
+        - "127.0.0.1:55432:5432"
       volumes:
         - postgres_data:/var/lib/postgresql/data
         - ./docker/postgres/init.sql:/docker-entrypoint-initdb.d/01-init.sql:ro
@@ -29,7 +29,7 @@
       image: apache/kafka:4.1.0
       container_name: policyflow-kafka
       ports:
-        - "9095:9094"
+        - "127.0.0.1:9095:9094"
       environment:
         KAFKA_NODE_ID: 1
         KAFKA_PROCESS_ROLES: broker,controller
@@ -63,19 +63,23 @@
       container_name: policyflow-policy-service
       environment:
         DB_URL: jdbc:postgresql://postgres:5432/policyflow
-        DB_USERNAME: policyflow
-        DB_PASSWORD: policyflow_test
+        DB_USERNAME: ${POSTGRES_USER}
+        DB_PASSWORD: ${POSTGRES_PASSWORD}
+        APP_SECURITY_USERNAME: ${APP_SECURITY_USERNAME}
+        APP_SECURITY_PASSWORD: ${APP_SECURITY_PASSWORD}
         SERVER_PORT: 8080
       ports:
-        - "8080:8080"
+        - "127.0.0.1:8080:8080"
+      healthcheck:
+        test: ["CMD", "curl", "-fsS", "http://localhost:8080/actuator/health"]
+        interval: 30s
+        timeout: 5s
+        retries: 3
+        start_period: 60s
       depends_on:
         postgres:
           condition: service_healthy
       restart: unless-stopped
-
-    # -------------------------
-    # Customer Service
-    # -------------------------
     customer-service:
       build:
         context: ./customer-service
@@ -83,19 +87,23 @@
       container_name: policyflow-customer-service
       environment:
         DB_URL: jdbc:postgresql://postgres:5432/policyflow_customer
-        DB_USERNAME: policyflow
-        DB_PASSWORD: policyflow_test
+        DB_USERNAME: ${POSTGRES_USER}
+        DB_PASSWORD: ${POSTGRES_PASSWORD}
+        APP_SECURITY_USERNAME: ${APP_SECURITY_USERNAME}
+        APP_SECURITY_PASSWORD: ${APP_SECURITY_PASSWORD}
         SERVER_PORT: 8081
       ports:
-        - "8081:8081"
+        - "127.0.0.1:8081:8081"
+      healthcheck:
+        test: ["CMD", "curl", "-fsS", "http://localhost:8081/actuator/health"]
+        interval: 30s
+        timeout: 5s
+        retries: 3
+        start_period: 60s
       depends_on:
         postgres:
           condition: service_healthy
       restart: unless-stopped
-
-    # -------------------------
-    # Claims Service
-    # -------------------------
     claims-service:
       build:
         context: ./claims-service
@@ -103,13 +111,21 @@
       container_name: policyflow-claims-service
       environment:
         DB_URL: jdbc:postgresql://postgres:5432/policyflow_claims
-        DB_USERNAME: policyflow
-        DB_PASSWORD: policyflow_test
+        DB_USERNAME: ${POSTGRES_USER}
+        DB_PASSWORD: ${POSTGRES_PASSWORD}
+        APP_SECURITY_USERNAME: ${APP_SECURITY_USERNAME}
+        APP_SECURITY_PASSWORD: ${APP_SECURITY_PASSWORD}
         SERVER_PORT: 8082
         KAFKA_BOOTSTRAP_SERVERS: kafka:9092
         POLICY_SERVICE_BASE_URL: http://policy-service:8080
       ports:
-        - "8082:8082"
+        - "127.0.0.1:8082:8082"
+      healthcheck:
+        test: ["CMD", "curl", "-fsS", "http://localhost:8082/actuator/health"]
+        interval: 30s
+        timeout: 5s
+        retries: 3
+        start_period: 60s
       depends_on:
         postgres:
           condition: service_healthy

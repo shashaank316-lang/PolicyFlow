@@ -1,12 +1,19 @@
 package com.policyflow.claimsservice.controller;
 
 import com.policyflow.claimsservice.replay.DltReplayService;
+import com.policyflow.claimsservice.config.SecurityConfig;
 import com.policyflow.claimsservice.service.ReplayAuditService;
 import org.junit.jupiter.api.Test;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.boot.webmvc.test.autoconfigure.WebMvcTest;
 import org.springframework.test.context.bean.override.mockito.MockitoBean;
 import org.springframework.context.annotation.Import;
+import org.springframework.boot.test.context.TestConfiguration;
+import org.springframework.context.annotation.Bean;
+import org.springframework.security.core.userdetails.User;
+import org.springframework.security.core.userdetails.UserDetailsService;
+import org.springframework.security.provisioning.InMemoryUserDetailsManager;
+import org.springframework.test.context.TestPropertySource;
 import org.springframework.http.MediaType;
 import org.springframework.test.web.servlet.MockMvc;
 import tools.jackson.databind.ObjectMapper;
@@ -16,11 +23,27 @@ import java.util.concurrent.ExecutionException;
 
 import static org.mockito.ArgumentMatchers.*;
 import static org.mockito.Mockito.*;
+import static org.springframework.security.test.web.servlet.request.SecurityMockMvcRequestPostProcessors.httpBasic;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.post;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.*;
 
 @WebMvcTest(DltReplayController.class)
+@Import({SecurityConfig.class, DltReplayControllerTest.TestSecurityConfig.class})
+@TestPropertySource(properties = {"app.security.username=test-user", "app.security.password=test-password"})
 class DltReplayControllerTest {
+
+    @TestConfiguration(proxyBeanMethods = false)
+    static class TestSecurityConfig {
+
+        @Bean
+        UserDetailsService testUserDetailsService() {
+            return new InMemoryUserDetailsManager(
+                    User.withUsername("test-user")
+                            .password("{noop}test-password")
+                            .roles("USER")
+                            .build());
+        }
+    }
 
     @Autowired
     private MockMvc mockMvc;
@@ -36,7 +59,7 @@ class DltReplayControllerTest {
 
     @Test
     void invalidJsonShouldReturn400() throws Exception {
-        mockMvc.perform(post("/api/admin/dlt/replay")
+        mockMvc.perform(post("/api/admin/dlt/replay").with(httpBasic("test-user", "test-password"))
                         .contentType(MediaType.APPLICATION_JSON)
                         .content("not-valid-json"))
                 .andExpect(status().isBadRequest())
@@ -59,7 +82,7 @@ class DltReplayControllerTest {
 
         doNothing().when(dltReplayService).replay(payload);
 
-        mockMvc.perform(post("/api/admin/dlt/replay")
+        mockMvc.perform(post("/api/admin/dlt/replay").with(httpBasic("test-user", "test-password"))
                         .contentType(MediaType.APPLICATION_JSON)
                         .content(payload))
                 .andExpect(status().isOk())
@@ -86,7 +109,7 @@ class DltReplayControllerTest {
                 new RuntimeException("Simulated Kafka failure")))
                 .when(dltReplayService).replay(payload);
 
-        mockMvc.perform(post("/api/admin/dlt/replay")
+        mockMvc.perform(post("/api/admin/dlt/replay").with(httpBasic("test-user", "test-password"))
                         .contentType(MediaType.APPLICATION_JSON)
                         .content(payload))
                 .andExpect(status().isBadGateway())
