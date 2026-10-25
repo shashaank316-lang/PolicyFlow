@@ -8,7 +8,19 @@
 # Maven build output
 **/target/
 
-# Local environment and secrets
+# Node.js dependencies
+**/node_modules/
+
+# React/Vite generated build output
+/react-frontend/dist/
+
+# Local environment files and secrets
 .env
 .env.*
 !.env.example
+
+# Local backup files
+*.bak
+
+# Downloaded documentation package
+/PolicyFlow-Documentation/

@@ -1,88 +1,157 @@
 # PolicyFlow
 
-PolicyFlow is a Java and Spring Boot microservices project that models core insurance workflows involving customers, policies, and claims.
+PolicyFlow is a local learning project that models a small insurance workflow using Spring Boot microservices, PostgreSQL, Kafka, and a React/Vite frontend. It was built to practice the kinds of architecture and engineering discussions that arise in a senior Java / technical lead role: REST APIs, service boundaries, persistence, asynchronous messaging, reliability, idempotent consumers, integration testing, Docker, and operational troubleshooting.
 
-## Architecture
+> **Project status:** The core local demo flow has been exercised successfully. This is a learning/demo project, not a production-certified insurance platform. See [Known Gaps and Next Steps](docs/KNOWN_GAPS_AND_NEXT_STEPS.md) before treating it as production-ready.
 
-The application contains three services:
+## What it does
 
-- **Customer Service**: Manages customer records and exposes customer APIs.
-- **Policy Service**: Manages insurance policies and validates customer information through Customer Service.
-- **Claims Service**: Manages claims, validates policies through Policy Service, and publishes claim events through Apache Kafka.
+- Exposes policy, customer, and claims APIs.
+- Uses a separate PostgreSQL database for each service.
+- Validates a claim against the policy service before saving it.
+- Writes the claim and a corresponding outbox event in the same database transaction.
+- Publishes pending outbox events to Kafka asynchronously.
+- Consumes `CLAIM_CREATED` events and records processed event IDs to prevent duplicate effects.
+- Provides a React/Vite frontend for simple API connectivity testing and interaction.
 
-### Event-driven processing
+## Architecture at a glance
 
-The Claims Service uses the transactional outbox pattern to persist claim changes and event records before asynchronous publication to Kafka. Kafka consumers process claim events with duplicate-event protection. Failed events can be routed to a dead-letter topic (`claim-events.DLT`) after retry handling.
+```mermaid
+flowchart LR
+    UI[React / Vite<br/>localhost:5173]
+    PS[Policy Service<br/>Spring Boot :8080]
+    CS[Customer Service<br/>Spring Boot :8081]
+    CL[Claims Service<br/>Spring Boot :8082]
+    PDB[(PostgreSQL<br/>policyflow)]
+    CDB[(PostgreSQL<br/>policyflow_customer)]
+    CLDB[(PostgreSQL<br/>policyflow_claims)]
+    K[Kafka<br/>claim-events]
+    CON[Claim Event Consumer]
 
-The DLT replay endpoint accepts an operator-supplied event payload, validates it, and republishes supported events through the outbox publisher to the `claim-events` topic. It does not automatically read messages from the dead-letter topic. Replay attempts are recorded in the database for auditing. In this local development implementation, the replay endpoint does not include authentication and authorization.
+    UI --> PS
+    UI --> CS
+    UI --> CL
+    PS --> PDB
+    CS --> CDB
+    CL --> CLDB
+    CL -->|Validate policy via REST| PS
+    CL -->|Outbox publisher| K
+    K --> CON
+    CON -->|processed event IDs| CLDB
+```
 
-## Technology Stack
+The boxes represent logical services and data stores. The browser-facing local ports are mapped by Docker Compose; services communicate with one another using Compose service names on the internal Docker network.
 
-- Java 17
-- Spring Boot
-- Maven
-- PostgreSQL
-- Apache Kafka
-- Docker
-- Git and GitHub
+## Services and local ports
 
-## Local Service Ports
+| Component | Local address / port | Responsibility |
+|---|---|---|
+| React / Vite frontend | `http://localhost:5173` | Development UI and backend connectivity checks |
+| Policy service | `http://localhost:8080` | Policy API and policy persistence |
+| Customer service | `http://localhost:8081` | Customer API and customer persistence |
+| Claims service | `http://localhost:8082` | Claim lifecycle, policy validation, transactional outbox |
+| PostgreSQL | host port `55432` | Local database container; app services connect internally to port `5432` |
+| Kafka | host port `9095` | Local access to Kafka; app containers use `kafka:9092` |
 
-| Service | Port | Database |
-|---|---:|---|
-| Policy Service | 8080 | `policyflow` |
-| Customer Service | 8081 | `policyflow_customer` |
-| Claims Service | 8082 | `policyflow_claims` |
+Database names seen in the local setup:
+
+- `policyflow` — policy service database
+- `policyflow_customer` — customer service database
+- `policyflow_claims` — claims service database
+
+The PostgreSQL role in the Compose setup is `policyflow`. Do not assume a default `postgres` role exists in this container.
 
 ## Prerequisites
 
-Install and configure:
+- Docker Desktop with Docker Compose
+- Java 17 and Maven for running/building services outside Docker and running Maven tests
+- Node.js/npm for the React frontend
+- Git
 
-- Java 17
-- Maven
-- PostgreSQL
-- Apache Kafka
+The observed local Java runtime was OpenJDK 17. Maven was installed through Homebrew. The Docker images used in the observed environment included PostgreSQL 17 and Apache Kafka 4.1.0. Check the repository's current Dockerfiles and Compose file for the versions actually pinned in your checkout.
 
-Docker is used for containerizing Claims Service in the current project setup.
+## Run locally
 
-## Configuration
-
-Each service has an `application.properties` file under `src/main/resources`.
-
-Claims Service supports environment-variable overrides for database connection settings, server port, and Kafka bootstrap servers. Customer and Policy Services also support environment-variable overrides for database URL, username, password, and server port.
-
-Configure your own local environment before starting the services. Do not commit passwords, access tokens, or other secrets.
-
-## Build and Test
-
-Run these commands from the repository root:
+Run these commands in **Mac Terminal**, from the repository root:
 
 ```bash
-./customer-service/mvnw -f customer-service/pom.xml clean test
-./policy-service/mvnw -f policy-service/pom.xml clean test
-mvn -f claims-service/pom.xml clean test
+cd ~/Projects/PolicyFlow
+docker compose up -d --build
+docker compose ps
 ```
 
-Each command should finish with `BUILD SUCCESS`.
+Wait until the services report healthy. First startup can take longer while images build and database migrations run.
 
-## API Overview
+Useful health checks:
 
-- Policy Service: `http://localhost:8080`
-- Customer Service: `http://localhost:8081`
-- Claims Service: `http://localhost:8082`
+```bash
+curl -i http://localhost:8080/actuator/health
+curl -i http://localhost:8081/actuator/health
+curl -i http://localhost:8082/actuator/health
+```
 
-Claims Service exposes claim APIs and an administrative dead-letter replay endpoint. Consult the controllers and configuration for the exact request formats and behavior.
+Stop containers without deleting persistent volumes:
 
-## Reliability Concepts Demonstrated
+```bash
+docker compose stop
+```
 
-- Service-to-service REST communication
-- Event-driven architecture with Kafka
-- Transactional outbox
-- Consumer-side duplicate-event protection
-- Dead-letter handling and replay auditing
-- Unit and integration testing
-- Containerization
+Start them again:
 
-## Development Workflow
+```bash
+docker compose start
+```
 
-Changes should be developed on feature branches, tested, pushed to GitHub, and submitted through pull requests for review before merging into `main`.
+To stop and remove containers/network while keeping named volumes, use `docker compose down`. **Do not add `-v` unless you intentionally want to delete the Compose-managed database/Kafka volumes.**
+
+## Basic API checks
+
+```bash
+# List policies
+curl -i http://localhost:8080/api/policies
+
+# List customers
+curl -i http://localhost:8081/api/customers
+
+# List claims
+curl -i http://localhost:8082/api/claims
+```
+
+Create a test claim (use a unique claim number each time):
+
+```bash
+curl -i -X POST http://localhost:8082/api/claims \
+  -H 'Content-Type: application/json' \
+  -d '{
+    "claimNumber": "CLM-2026-DOCS-001",
+    "policyNumber": "POL-2026-1004",
+    "customerId": "CUS-10001",
+    "claimType": "AUTO_ACCIDENT",
+    "claimAmount": 650.00
+  }'
+```
+
+If that claim number already exists, choose a new unique value. If you see HTTP 401/403, inspect the current service security configuration and local environment variables; local auth settings may change during development. Do not paste passwords or tokens into Git, tickets, chat, or screenshots.
+
+## Tests
+
+The claims-service suite was run locally and reported `BUILD SUCCESS`. It includes tests for Kafka integration/consumer idempotency, outbox recovery from a simulated transient send failure, and transaction rollback when saving the outbox event fails. Run it from the repository root with:
+
+```bash
+cd ~/Projects/PolicyFlow/claims-service
+mvn test
+```
+
+For test scope and the distinction between simulated publisher failure and a real Kafka container restart, read [Testing and Verification](docs/TESTING_AND_VERIFICATION.md).
+
+## Documentation index
+
+- [Architecture and Event Flow](docs/ARCHITECTURE.md)
+- [Local Development and Operations](docs/LOCAL_DEVELOPMENT.md)
+- [Testing and Verification](docs/TESTING_AND_VERIFICATION.md)
+- [Known Gaps and Next Steps](docs/KNOWN_GAPS_AND_NEXT_STEPS.md)
+- [Security and Git Checklist](docs/SECURITY_AND_GIT_CHECKLIST.md)
+
+## Important design principle
+
+The claims database is the source of truth for claim creation. The transactional outbox makes the database write and event record atomic; Kafka publication happens asynchronously. This avoids the dual-write failure where the claim commits but the event is lost (or the event is published even though the database transaction rolls back). Consumers still need idempotency because at-least-once delivery/retries can result in the same event being received more than once.

@@ -1,0 +1,9 @@
+apiVersion: v1
+data:
+  01-init.sql: |
+    CREATE DATABASE policyflow_customer;
+    CREATE DATABASE policyflow_claims;
+kind: ConfigMap
+metadata:
+  name: policyflow-postgres-init
+  namespace: policyflow

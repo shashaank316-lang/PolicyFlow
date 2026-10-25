@@ -12,8 +12,15 @@ import org.testcontainers.kafka.KafkaContainer;
 import org.testcontainers.containers.PostgreSQLContainer;
 import org.testcontainers.junit.jupiter.Container;
 import org.testcontainers.junit.jupiter.Testcontainers;
+import com.policyflow.claimsservice.consumer.ClaimEventProcessingService;
 import org.springframework.kafka.core.KafkaTemplate;
 import org.springframework.kafka.support.SendResult;
+import org.springframework.test.context.bean.override.mockito.MockitoSpyBean;
+
+import static org.mockito.ArgumentMatchers.eq;
+import static org.mockito.Mockito.atLeast;
+import static org.mockito.Mockito.verify;
+import static org.mockito.Mockito.timeout;
 
 import java.time.Duration;
 import java.util.UUID;
@@ -42,6 +49,8 @@ class KafkaIntegrationTest {
         registry.add("spring.datasource.password", postgres::getPassword);
         registry.add("spring.kafka.bootstrap-servers", kafka::getBootstrapServers);
     }
+    @MockitoSpyBean
+    private ClaimEventProcessingService processingService;
 
     @Autowired
     private KafkaTemplate<String, String> outboxKafkaTemplate;
@@ -92,4 +101,60 @@ class KafkaIntegrationTest {
                 "The Claims Service consumer did not record eventId: " + eventId
         );
     }
+
+    @Test
+    void shouldIgnoreDuplicateEventDelivery() throws Exception {
+        String topic = "claim-events";
+        String eventId = UUID.randomUUID().toString();
+        String claimNumber = "KAFKA-DUPLICATE-" + eventId;
+
+        String payload = """
+            {
+              "eventId": "%s",
+              "eventType": "CLAIM_CREATED",
+              "claimNumber": "%s"
+            }
+            """.formatted(eventId, claimNumber);
+
+        // Publish the first delivery.
+        outboxKafkaTemplate
+                .send(topic, claimNumber, payload)
+                .get(10, TimeUnit.SECONDS);
+
+        // Wait for the consumer to persist the first delivery.
+        long deadline =
+                System.nanoTime() + Duration.ofSeconds(15).toNanos();
+
+        while (System.nanoTime() < deadline
+                && !processedEventRepository.existsByEventId(eventId)) {
+            Thread.sleep(250);
+        }
+
+        assertTrue(
+                processedEventRepository.existsByEventId(eventId),
+                "The first delivery was not processed"
+        );
+
+        // Publish the exact same event again.
+        outboxKafkaTemplate
+                .send(topic, claimNumber, payload)
+                .get(10, TimeUnit.SECONDS);
+
+        // Allow the consumer time to handle the duplicate.
+        // Verify that the consumer handled the second delivery.
+        verify(processingService, timeout(10000).atLeast(2))
+                .process(eq(eventId), eq("CLAIM_CREATED"));
+        // The same event ID must still have only one database record.
+        long matchingRecords = processedEventRepository.findAll()
+                .stream()
+                .filter(event -> eventId.equals(event.getEventId()))
+                .count();
+
+        assertEquals(
+                1,
+                matchingRecords,
+                "Duplicate delivery must not create another processed-event record"
+        );
+    }
+
 }
